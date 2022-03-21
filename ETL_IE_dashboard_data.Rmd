@@ -1,0 +1,204 @@
+---
+title: "Tratamiento a los datos de la FCD para el dashboard de especies invasoras"
+author: "Juan Carlos Izurieta, IID, FCD"
+date: "21/03/2022"
+output:
+  html_document:
+    theme: "cerulean"
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+![](https://www.darwinfoundation.org/images/fcd/FCD-logo-mini.jpg)
+
+Responsable de tratamientos, más información sobre este documento: Juan Carlos Izurieta [juancarlos.izurieta\@fcdarwin.org.ec](mailto:juancarlos.izurieta@fcdarwin.org.ec){.email}
+
+# Libraries
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(feather)
+library(openxlsx)
+library(Hmisc)
+```
+
+# Data load
+
+```{r}
+data <- read.csv(r"(data\ListTaxaALL_20220317_CJ.csv)")
+ref_data <- openxlsx::read.xlsx(r"(data\Lista especies introducidas Galapagos actualizada jul 2017 para ABG y DPNG 15 Nov 2018 mod 12 nov21.xlsx)", sheet="lista introducidas", startRow = 3)
+```
+
+# Data prep (database file)
+
+## Columns rename
+
+```{r}
+names(data)[names(data)=="TRIM.CONCAT_WS.....Genus..SpecificEpithet..InfraspecificEpithet.."] <- "ScientificName"
+names(data)[names(data)=="ï..TaxonID"] <- "TaxonID"
+names(data)[names(data)=="ORDER"] <- "Order"
+names(data)[names(data)=="NameEnglish"] <- "TaxonOrigin"
+```
+
+## Keep only introduced records
+
+```{r}
+data <- data %>% filter(TaxonOrigin %in% c("Introduced - eradicated", 
+                                           "Introduced - established",
+                                           "Introduced - intercepted"))
+```
+
+## Rename introduced status categories
+
+```{r}
+data <- data %>% mutate(introducedStatus = case_when(TaxonOrigin == "Introduced - eradicated" ~ "Eradicated",
+                                                     TaxonOrigin == "Introduced - established" ~ "Currently established",
+                                                     TaxonOrigin == "Introduced - intercepted" ~ "Intercepted",
+                                                     TRUE ~ TaxonOrigin))
+```
+
+## Dates
+
+```{r}
+data$TaxonAnnotationDate <- ymd_hms(data$TaxonAnnotationDate)
+data$RecordDate <- date(data$TaxonAnnotationDate)
+data$RecordYear <- year(data$TaxonAnnotationDate)
+```
+
+## MOI capitalization values
+
+```{r}
+data$MOI <- Hmisc::capitalize(data$MOI)
+```
+
+## Filling no data in GPSSTatus
+
+```{r}
+data$GPSStatus <- ifelse(data$GPSStatus == "", "No Data", data$GPSStatus)
+```
+
+# Data prep (reference file)
+
+## Creating scientific name column
+
+```{r}
+ref_data$ScientificName <- paste(ref_data$Genus, ref_data$Specific.Epithtet, sep = " ")
+ref_data$ScientificName <- ifelse(is.na(ref_data$InfraspecificEpithet), ref_data$ScientificName, paste(ref_data$ScientificName, ref_data$InfraspecificEpithet, sep=" "))
+```
+
+## Creating combination of Kingdom-phylum-class
+
+```{r}
+ref_data$com_kpc <- paste(ref_data$Kingdom, ref_data$Phylum.or.Division, ref_data$Class)
+```
+
+## Rename columns
+
+```{r}
+names(ref_data)[names(ref_data)=="Organism.type"] <- "OrganismType"
+names(ref_data)[names(ref_data)=="First.record"] <- "FirstRecord"
+names(ref_data)[names(ref_data)=="DECADE"] <- "Decade"
+names(ref_data)[names(ref_data)=="Type.of.introduction"] <- "MOI"
+names(ref_data)[names(ref_data)=="Principle.pathway"] <- "Pathway"
+names(ref_data)[names(ref_data)=="Status.Galapagos"] <- "GPSStatus"
+```
+
+## Dates from first record
+
+```{r}
+ref_data$FirstRecordDate <- paste(ref_data$FirstRecord, "01-01", sep = "-")
+ref_data$FirstRecordDate <- ymd(ref_data$FirstRecordDate)
+ref_data$FirstRecordYear <- year(ref_data$FirstRecordDate)
+```
+
+## Removing rows
+
+```{r}
+# Removing Monkey
+```
+
+## Adding icons to organism type
+
+```{r}
+
+iconA <- "https://cdn-icons-png.flaticon.com/512/479/479765.png" # starfish
+iconB <- "https://cdn-icons-png.flaticon.com/512/5661/5661866.png" # algae
+iconC <- "https://cdn-icons-png.flaticon.com/512/419/419095.png" # fish
+iconD <- "https://cdn-icons-png.flaticon.com/512/1728/1728279.png" # bacteria
+iconE <- "https://cdn-icons-png.flaticon.com/512/357/357539.png" # wasp
+iconF <- "https://cdn-icons-png.flaticon.com/512/497/497393.png" # plant
+iconG <- "https://cdn-icons-png.flaticon.com/512/1167/1167679.png" # paws
+
+ref_data <- ref_data %>% mutate(icon = case_when(OrganismType == "Marine invertebrates" ~ iconA,
+                                         OrganismType == "Marine plants" ~ iconB,
+                                         OrganismType == "Marine vertebrates" ~ iconC,
+                                         OrganismType == "Plant pathogens" ~ iconD,
+                                         OrganismType == "Terrestrial invertebrates" ~ iconE,
+                                         OrganismType == "Terrestrial plants" ~ iconF,
+                                         OrganismType == "Terrestrial vertebrates" ~ iconG,
+                                         OrganismType == "Animal pathogens" ~ iconD,
+                                         TRUE ~ iconB))
+```
+
+## Trim values of specific columns
+
+```{r}
+ref_data$OrganismType <- trimws(ref_data$OrganismType, which="both")
+```
+
+# Creating hybrid file
+
+First based in database data:
+
+```{r}
+a <- data %>% select(TaxonID, Domain, Kingdom, PhylumOrDivision, Class, Order, Family, ScientificName, IUCNStatus, CommonNameEnglish, CommonNameSpanish, RecordDate, introducedStatus, MOI, GPSStatus)
+b <- ref_data %>% select(OrganismType, FirstRecordDate, FirstRecordYear,Pathway, Subpathway, icon, ScientificName)
+
+# Join based on DB data:
+dfa <- left_join(a, b, by=c("ScientificName"))
+```
+
+# Change NAs in organism type
+
+```{r}
+dfa$OrganismType <- ifelse(is.na(dfa$OrganismType), "No data", dfa$OrganismType)
+dfa$Pathway <- ifelse(is.na(dfa$Pathway), "No data", dfa$Pathway)
+dfa$MOI <- ifelse(dfa$MOI == "", "No data", dfa$MOI)
+```
+
+Second based on ref data:
+
+```{r}
+# a <- data %>% select(TaxonID, Domain, Kingdom, PhylumOrDivision, Class, Order, Family, ScientificName, IUCNStatus, introducedStatus, CommonNameEnglish, CommonNameSpanish)
+# b <- ref_data %>% select(OrganismType, FirstRecordDate, FirstRecordYear, Decade, MOI, Pathway, Subpathway, GPSStatus, ScientificName)
+# 
+# # Join based on reference data:
+# dfb <- left_join(b, a, by=c("ScientificName"))
+```
+
+```{r}
+dfa <- dfa %>% arrange(FirstRecordDate)
+```
+
+# Export file
+
+```{r}
+write_feather(dfa, r"(data\ie_joined.feather)")
+```
+
+# Meeting notes:
+
+```{r}
+# Fields from database fields:
+data %>% group_by(introducedStatus) %>% tally()
+data %>% group_by(MOI) %>% tally()
+data %>% group_by(GPSStatus) %>% tally()
+
+# Fields from reference data fields:
+ref_data %>% group_by(FirstRecordYear) %>% tally()
+ref_data %>% group_by(OrganismType) %>% tally()
+ref_data %>% group_by(Pathway) %>% tally()
+ref_data %>% group_by(Subpathway) %>% tally()
+```
