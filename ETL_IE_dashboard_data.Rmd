@@ -188,6 +188,60 @@ dfa <- dfa %>% arrange(FirstRecordDate)
 write_feather(dfa, r"(data\ie_joined.feather)")
 ```
 
+# Sankey diagram:
+
+```{r}
+sankey <- dfa %>% filter(!OrganismType=="No data") %>% group_by(OrganismType, Pathway, Subpathway) %>% tally()
+# sankey$Subpathway <- ifelse(is.na(sankey$Subpathway), "No data", sankey$Subpathway)
+labels <- c(sankey$OrganismType, sankey$Pathway, sankey$Subpathway)
+labels <- labels[!is.na(labels)]
+labels <- unique(labels)
+index <- seq(1:length(labels))-1
+ref_df <- data.frame(labels=labels, index=index)
+```
+
+```{r}
+sankey_a <- dfa %>% filter(!OrganismType=="No data") %>% group_by(OrganismType, Pathway) %>% tally()
+sankey_a$id <- paste(sankey_a$OrganismType, sankey_a$Pathway)
+
+sankey_b <- dfa %>% filter(!OrganismType=="No data") %>% group_by(OrganismType, Pathway, Subpathway) %>% summarise(n=n(), .groups = "drop")
+sankey_b$id <- paste(sankey_b$OrganismType, sankey_b$Pathway)
+
+sankey_c <- left_join(sankey_a, sankey_b, by="id")
+sankey_c <- sankey_c %>% select(OrganismType.x, Pathway.x, Subpathway, n.x, n.y)
+names(sankey_c) <- c("OrganismType", "Pathway", "Subpathway", "n_org_path", "n_path_subpath")
+```
+
+
+
+```{r}
+# Replace OrganismType for corresponding indexes:
+sankey <- left_join(sankey_c, ref_df, by=c("OrganismType" = "labels"))
+names(sankey)[names(sankey)=="index"] <- c("OrganismTypeIndex")
+
+# Replace Pathway for corresponding indexes:
+sankey <- left_join(sankey, ref_df, by=c("Pathway" = "labels"))
+names(sankey)[names(sankey)=="index"] <- c("PathwayIndex")
+
+# Replace Pathway for corresponding indexes:
+sankey <- left_join(sankey, ref_df, by=c("Subpathway" = "labels"))
+names(sankey)[names(sankey)=="index"] <- c("SubpathwayIndex")
+```
+
+```{r}
+source <- c(sankey$OrganismTypeIndex, sankey$PathwayIndex)
+target <- c(sankey$PathwayIndex, sankey$SubpathwayIndex)
+value <- c(sankey$n_org_path, sankey$n_path_subpath)
+sankey <- data.frame(source=source, target=target, value=value)
+```
+
+```{r}
+sankey <- sankey %>% arrange(desc(value))
+write_feather(sankey, r"(data\sankey.feather)")
+write_feather(ref_df, r"(data\sankey_labels_indexes.feather)")
+```
+
+
 # Meeting notes:
 
 ```{r}
@@ -202,3 +256,13 @@ ref_data %>% group_by(OrganismType) %>% tally()
 ref_data %>% group_by(Pathway) %>% tally()
 ref_data %>% group_by(Subpathway) %>% tally()
 ```
+
+
+```{r}
+x <- data.frame(a=c("pera", "manzana", "uva"),
+                b=c(2, 3, 5))
+
+uncount(x, weights = b)
+
+```
+
